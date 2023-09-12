@@ -1,0 +1,627 @@
+%% This flie can only be ran after runnign the files associated with Figures 1&2 (uses processed data files) 
+%% This file calls other files:
+% *compute_SigmaX from JD et al 2013
+%% get DATA ARRAYS AND positional error  FOR 2XgAP Data
+clearvars
+if ~exist('processedData', 'dir')
+    mkdir('processedData')
+end
+fol=cd;
+pn = fullfile(fol,'processedData');
+
+gapNAMES={'Hb', 'Kr', 'Gt', 'Kni'};
+t4checkGap=42; %min into NC 14
+tRange=[t4checkGap-4, t4checkGap+4];
+dt42WT=cell(1,4);%each cell contains one line data in the form: 4 gene, n embryos, 7stripes
+dt42WTthrufs=cell(1,4);%each cell contains one line data in the form: 4 gene, n embryos, 7stripes
+zsmooth=30; 
+nbins=1000;
+
+
+for lineID=1:4
+    fn=fullfile(pn, [gapNAMES{lineID},'LineWithGenotypeKmeans']);
+    load (fn);
+
+    % normalize data and identify 2x gap embryos in the 38-48 min window:
+    idg=2;
+    id2x=find(Genotype==idg);
+    idAge=find(Age>tRange(1) & Age<tRange(2));
+    ndx=intersect(id2x,idAge);
+    
+    Hb=Hb(ndx,:);
+    Kr=Kr(ndx,:);
+    Gt=Gt(ndx,:);
+    Kni=Kni(ndx,:);
+
+    %remove background from individual embryos and normalize to mean(wt(38-48))
+    Hb=Hb-min(Hb(:,101:900), [],2);
+    Kr=Kr-min(Kr(:,101:900), [],2);
+    Gt=Gt-min(Gt(:,101:900), [],2);
+    Kni=Kni-min(Kni(:,101:900), [],2);
+
+    Hb=Hb/max(mean(Hb(:,101:900)));
+    Kr=Kr/max(mean(Kr(:,101:900)));
+    Gt=Gt/max(mean(Gt(:,101:900)));
+    Kni=Kni/max(mean(Kni(:,101:900)));
+    %Get data arrays
+    nbins=size(Kr,2);
+    nEmbryos=size(Kr,1);
+    dt=NaN(4,nEmbryos,nbins);
+    counter=0;
+    for n=1:nEmbryos
+        dt(2,n,101:900)=Kr(n,101:900);
+        dt(3,n,101:900)=Gt(n,101:900);
+        dt(1,n,101:900)=Hb(n,101:900);
+        dt(4,n,101:900)=Kni(n,101:900);
+     end
+    dtAll{lineID}=dt;
+    
+    [sigma_4Gm(:,:,lineID) mgm dgm cgm]  = compute_SigmaX(dt, nbins, zsmooth);
+    for g1=1:4
+        for g2=(g1+1):4
+            counter=counter+1;
+     [sigma_2Gm(:,:,counter,lineID) mgm dgm cgm]  = compute_SigmaX(dt([g1,g2],:,:), nbins, zsmooth);
+        end
+    end
+    for g=1:4
+        Genes=1:4;
+        Genes(g)=[];
+        [sigma_1Gm(:,:,g,lineID) m1gm(:,g,lineID) dgm1g(:,g,lineID) cgm1g(:,g,lineID)]  = compute_SigmaX(dt(g,:,:), nbins, zsmooth);
+        [sigma_3Gm(:,:,g,lineID) mgm dgm cgm]  = compute_SigmaX(dt(Genes,:,:), nbins, zsmooth);
+    end
+end
+
+%% get the gene that provides the minimum sigmax1G:
+minS=0.015;
+for lineID=1:4
+    fn=fullfile(pn, ['PRpeakNvalley4',gapNAMES{lineID}]);
+    load(fn);
+     XRange=300:800;
+     for x=XRange
+
+         [MinSig1G(x,lineID),Gmin(x,lineID)]=min(squeeze(mean(sigma_1Gm(:, x,:,lineID),1)));
+         ste4MinSig1g(x,lineID)=squeeze(std(sigma_1Gm(:, x,Gmin(x,lineID),lineID),1));
+          gSmallPE(:,x,lineID)=squeeze(mean(sigma_1Gm(:, x,:,lineID),1))<=minS;
+     end
+end
+
+
+
+ for lineID=1:4
+    dt=dtAll{lineID};
+    fn=fullfile(pn, ['PRpeakNvalley4',gapNAMES{lineID}]);
+    load(fn);
+    x4checkWt{lineID}=round(nanmean(EvePeakLocWT));
+    % compose the data array containing the 4 gap levels at the mean stripe
+    % position for individual embryos per genotype:
+    dt42WT{lineID}=dt(:, :,x4checkWt{lineID});
+    dt42WTthrufs{lineID}=dt(:, :,round(nanmean(EveValeyLocWT)));%+thrufDelta);
+ end
+ %% make a table to inform on the mean and std of gap levels at each eve stripe:
+ for S=1:7
+    for G=1:4
+        for lineID=1:4
+            mm(lineID,G,S)=mean(dt42WT{lineID}(G,:,S));
+            ss(lineID,G,S)=std(dt42WT{lineID}(G,:,S));
+        end
+    end
+ end
+   
+%% plot Panel A ( the pooled dynamic range by sigmas):
+
+S=1:7;% for refference, plot all 2x stripes at background
+% define stripe colors 
+C=colormap(jet(7));
+close all
+for s=[3:5]
+    for rgb=1:3
+    if (C(s,rgb))~=0
+        C(s,rgb)=C(s,rgb)-0.1;
+    end
+    end
+end
+c=[249 205 151; ...
+    178 226 137; ....
+    112 149 225 ;...
+    209 141 178 ];
+c=c/250;
+
+C1(1:2:13,:)=C; % plotting stripe peak followed by valley: peaks are at stripe color, and valleys are black
+C1(2:2:12,:)=zeros(6,3);
+
+left=0.15;
+bottom=0.15;
+width=6.8;
+hight=2;
+f=figure('Units', 'inches', 'Position',[left, bottom,width,hight]);
+for g=1:4
+    X=[];
+       for stripe=S%1:7 
+            XallL=[];
+            XallLt=[];
+                for line=1:4
+                    XallL=[XallL;squeeze(dt42WT{line}(g,:,stripe))'];
+
+                    if stripe~=7
+                       XallLt=[XallLt;dt42WTthrufs{line}(g,:,stripe)'];
+                    end
+                end
+                a=nan(200,1);
+                a(1:length(XallL))=XallL;
+                b=nan(200,1);
+                b(1:length(XallLt))=XallLt;
+                X=[X,a];
+                if(stripe~=7)
+                      X=[X,b];
+                end
+       end
+     subplot(1,4, g);
+    for SS=1:13
+         errorbar(SS,nanmean(X(:,SS)),nanstd(X(:,SS)),'Color', C1(SS,:),'MarkerFaceColor', C1(SS,:),...
+             'Marker', 'o', 'LineStyle', 'none', 'MarkerSize',4);
+         hold on
+    end
+     set(gca,'XTick', 1:13,  'XTickLabel',{'on1','off1', 'on2', 'off2', 'on3', 'off3','on4', 'off4', 'on5'...
+         'off5', 'on6', 'off6', 'on7'}, 'XTickLabelRotation',90)
+     ylabel(['[',gapNames{g},']@2xGap' ]);
+     box off
+     if g==1
+        text(9,1.4, ['n=', num2str(sum(~isnan(X(:,1))))], 'FontWeight','bold', 'FontSize',7);
+     end
+     set(gca, 'FontSize',7);
+    ylim([0 1.2])
+    xlim([0 14])
+end
+%% panels B&C
+xEve1=nan(7,4);
+xEveT=nan(6,4);
+xEveI=nan(12,4);
+% check at eve stripes positions:
+for lineID=1:4
+        fn=fullfile(pn, ['PRpeakNvalley4',gapNAMES{lineID}]);
+        load(fn, 'EvePeakLocWT', 'EveValeyLocWT');
+    xEve1(:,lineID)=round(nanmean(EvePeakLocWT));
+    xEveT(:,lineID)=round(nanmean(EveValeyLocWT));
+    for i=1:6
+    xEveI(2*i-1,lineID)= round(xEve1(i,lineID)+0.5*abs( xEve1(i,lineID)- xEveT(i,lineID)));
+    xEveI(2*i,lineID)= round(xEveT(i,lineID)+0.5*abs( xEveT(i,lineID)-xEve1(i+1,lineID)));
+    end
+end
+
+left=0.15;
+bottom=0.15;
+width=6.8;
+hight=2;
+f=figure('Units', 'inches', 'Position',[left, bottom,width,hight]);
+subplot(1,2,1)
+
+% check at eve stripes positions:
+for lineID=1:4
+%     XRange=xEve1(:,lineID);
+    XRange=351:10:800;
+    if length(XRange)==7
+        for s=1:7
+        errorbar(XRange(s)/1000,MinSig1G(XRange(s),lineID),...
+                 ste4MinSig1g(XRange(s),lineID),'Color',C(s,:),...
+            'LineStyle', 'none','Marker','.');
+        hold on
+        errorbar(XRange(s)/1000,squeeze(mean(sigma_4Gm(:,XRange(s),lineID))),...
+                squeeze(std(sigma_4Gm(:,XRange(s),lineID))),'Color',[0.5 0.5 0.5],...
+            'LineStyle', 'none','Marker','o', 'MarkerSize', 3);
+        hold on
+        
+        end
+    else
+    p1=plot(XRange/1000,MinSig1G(XRange,lineID), 'k.'); 
+    hold on
+    p2=plot(XRange/1000,mean(sigma_4Gm(:,XRange,lineID)),...
+        'Color',[0.5 0.5 0.5],'LineStyle', 'none','Marker','o', 'MarkerSize', 3);
+
+      hold on
+    end
+end
+  xlim([0.33 0.78]);
+  ylim([0,0.05])
+  hold on
+  plot([0.33 0.78], [0.015 0.015], '--k');
+%     plot([0.33 0.78], [0.01 0.01], ':r');
+legend([p1,p2], {'min|_{g_i}(\sigma_x1g)','\sigma_x4g'})
+box off
+xlabel('x/l');
+ylabel('\sigma_x');
+set(gca, 'FontSize', 8);
+text(0.2, 0.05, 'B', 'FontWeight', 'bold');
+
+axes('Position',[0.57 0.2053 0.3382 0.425]);
+for lineID=1:4
+    for pp=1:2
+        if pp==1
+            XRange=xEve1(:,lineID);
+            Mark='^';
+        elseif pp==2
+            XRange=xEveT(:,lineID);
+            Mark='v';
+        else
+            XRange=xEveI(:,lineID);
+            Mark='x';
+        end
+        for s=1:length(XRange)
+         Col=c(Gmin(XRange(s),lineID),:);
+
+             errorbar(XRange(s)/1000,MinSig1G(XRange(s),lineID),...
+                 ste4MinSig1g(XRange(s),lineID),'Color',Col,...
+            'LineStyle', 'none','Marker',Mark, 'MarkerSize', 3);
+            hold on
+        end
+
+    end
+end
+pl2{pp+1}=plot(nan, nan, 'Marker', 'o', 'LineStyle', 'none', 'Color', [0.5 0.5 0.5]);
+  xlim([0.33 0.78]);
+  ylim([0,0.06])
+  hold on
+  plot([0.33 0.78], [0.015 0.015], '--k');
+%   plot([0.33 0.78], [0.01 0.01], '--r');
+box off
+xlabel('x/l');
+ylabel('\sigma_x_g')
+clear p
+set (gca, 'FontSize', 8);
+set (gca, 'XTick', sortrows([mean(xEve1,2);mean(xEveT,2)])/1000,'XTickLabel', ...
+    {'on1', 'off1', 'on2', 'off2','on3', 'off3', 'on4', 'off4', 'on5', 'off5','on6', 'off6', 'on7'});
+p(5)=plot(nan, nan, 'k^', 'MarkerSize',3);
+p(6)=plot(nan, nan, 'kv', 'MarkerSize',3);
+legend([p(5), p(6)], {'peaks', 'troughs'}, 'FontSize', 8);
+
+axes('Position',[0.57 0.69618 0.3382 0.21]);
+dt=dtAll{lineID};
+ hold on
+ for g=1:4
+     DT=squeeze(dt(g,:,101:900));
+    forArea=[nanmean(DT)-nanstd(DT);...
+    nanstd(DT);...
+    nanstd(DT)];
+    ar=area((101:900)/1000,forArea');
+    ar(1).FaceColor='none';
+    CC1=1.3*c(g,:);
+    CC1(CC1>1)=1;
+    ar(2).FaceColor=CC1;%0.96*c(g,:);
+    ar(3).FaceColor=CC1;%0.96*c(g,:);
+    ar(1).LineStyle='none';
+    ar(2).LineStyle='none';
+    ar(3).LineStyle='none';
+    p(g)=plot((101:900)/1000,nanmean(DT),'Color',  c(g,:), 'LineWidth', 1.2);
+
+ end
+ for lineID=1:4
+     for pp=1:2
+        if pp==1
+            XRange=xEve1(:,lineID);
+            Mark='^';
+        elseif pp==2
+            XRange=xEveT(:,lineID);
+            Mark='v';
+        end
+        for s=1:length(XRange)
+            Col=c(Gmin(XRange(s),lineID),:);
+            plot(XRange(s)/1000,mean(dt(Gmin(XRange(s),lineID),:,XRange(s))),...
+                'Marker', Mark,'LineStyle', 'none','Color', Col,'MarkerFaceColor',Col, 'MarkerSize',3,...
+                'MarkerEdgeColor','k');
+        end
+
+     end
+ end
+xlim([0.33 0.78]);
+set(gca, 'XAxisLocation', 'top');
+set (gca, 'FontSize', 8);
+ylabel('<I>');
+for g=1:4
+    p(g)=plot(nan, nan, 'Marker','_', 'Color',c(g,:), 'LineStyle', 'none', 'MarkerSize',5);
+    hold on
+end
+legend ([p(1),p(2), p(3), p(4)],gapNames, 'FontSize', 7,'Position',[0.632 0.35 0.0996 0.293]);
+text(0.22, 1.3, 'C', 'FontWeight', 'bold');
+
+%% plot panel D and E
+left=0.15;
+bottom=0.15;
+width=6.8;
+hight=3;
+f=figure('Units', 'inches', 'Position',[left, bottom,width,hight]);
+subplot(1,2,1)
+for pp=1:3
+       if pp==1
+            XRange=xEve1(:,lineID)';
+            Mark='^';
+        elseif pp==2
+            XRange=xEveT(:,lineID)';
+            Mark='v';
+        else
+            XRange=xEveI(:,lineID)';
+            Mark='x';
+        end
+            
+
+for lineID=1:4
+      counter=0;
+      for x=XRange
+          counter=counter+1;
+
+          if pp==1 ||pp==2 
+              Col=C(counter,:);
+          else
+              Col='k';
+          end
+            plot(abs(dgm1g(x,Gmin(x,lineID),lineID)) ,sqrt(cgm1g(x,Gmin(x,lineID),lineID)) ,...
+            'Color', Col, 'Marker', Mark, 'LineStyle', 'none', 'MarkerSize',4);
+        hold on
+      end
+      pl{pp}=plot(nan, nan, 'Marker', Mark, 'LineStyle', 'none', 'Color', 'k', 'MarkerSize',4);
+end
+          
+end
+xlabel('|dg/dx|');
+ylabel('\sigma_i_g')
+axis square
+box off
+legend([pl{1},pl{2},pl{3}], {'peak', 'Trough', 'Inter'}, 'Location', 'southeast');
+
+% run PCA for all stripes only wt PEAKS
+% overlay all individual lines pca for peaks and project troughs accordingly
+
+MS=2;% this is marker size
+left=0.15;
+bottom=0.15;
+width=6.850394;
+hight=2;
+countEperStripe=nan(1,4);
+ % run PCA for all stripes only wt PEAKS
+
+ for lineID=1:4
+     sallStripes=[];
+    for stripe =1:7
+        sallStripes=[sallStripes;squeeze(dt42WT{lineID}(:,:,stripe))'];%just pool all together
+         if stripe==1
+             countEperStripe(lineID)=size(sallStripes,1);
+         end
+    end
+    standLev1{lineID}=nanstd(sallStripes);
+    sallStripes=sallStripes./nanstd(sallStripes);
+
+    meanGAllLines{lineID}=nanmean(sallStripes)';
+    sallStripes=sallStripes-nanmean(sallStripes);
+
+    
+    [coeff{lineID},score{lineID},latent,tsquared,explained{lineID},mu]=pca(sallStripes);%,'Centered',false);
+    for stripe=1:6
+        ProjectedData=squeeze(dt42WTthrufs{lineID}(:,:,stripe));
+         for g=1:4
+              ProjectedData(g,:)=ProjectedData(g,:)/standLev1{lineID}(g);
+         end
+       ProjectedData=ProjectedData-meanGAllLines{lineID};
+       ProjectedD{lineID}(stripe,:,:)= ProjectedData'*coeff{lineID};   
+    end
+ end
+ 
+% % % % % % % % %  now plot:
+pc4show=[1,2];
+subplot(1,2,2);
+mark='v';
+for stripe =1:6
+     for lineID=1:4
+         if lineID==2 
+             sc=-1;
+         else
+             sc=1;
+         end
+         plot(ProjectedD{lineID}(stripe,:,pc4show(1)), sc*ProjectedD{lineID}(stripe,:,pc4show(2)), 'Marker',mark, 'LineStyle', 'none',...
+         'Color','k', 'MarkerFaceColor', C(stripe,:), 'MarkerSize', MS);
+          hold on
+     end
+end
+
+for stripe=1:7
+    for lineID=1:4
+        if lineID==2
+            sc=-1;
+        else
+            sc=1;
+        end
+        ndx=1+(stripe-1)*countEperStripe(lineID):stripe*countEperStripe(lineID); 
+        plot(score{lineID}(ndx,pc4show(1)), sc*score{lineID}(ndx,pc4show(2)), 'Marker','o', 'LineStyle', 'none',...
+         'Color',C(stripe,:), 'MarkerFaceColor', C(stripe,:), 'MarkerSize', MS );
+        hold on 
+    end
+end
+
+xlabel(['pc',num2str(pc4show(1))']);
+ylabel(['pc',num2str(pc4show(2))']);
+axis square
+xlim([-2.9 3.3])
+ylim([-2.9 3.3])
+
+grid on
+box off
+text(-4.5, 3.5, 'B', 'FontWeight', 'b');
+
+%% panels A & B for Figure S3
+ Col4Dose=[1,    0.078,    0.65;...
+    0.93,    0.69,    0.13;...
+    0.21,    0.8,    0.51];
+% Get sigma_i values for all stripes peaks or troughs for all gap genes per
+% wildtype line: 
+sigmaIp=nan(7,4,4);%stripe peak, gene, line
+sigmaIt=nan(6,4,4);%stripe trough, gene,line
+
+for line=1:4%g=1:4
+       for stripe=1:7 
+           for g=1:4
+               sigmaIp(stripe, g, line)=nanstd(squeeze(dt42WT{line}(g,:,stripe)));
+               if stripe~=7
+                   sigmaIt(stripe, g, line)=nanstd(squeeze(dt42WTthrufs{line}(g,:,stripe)));
+               end
+           end
+       end
+end
+
+edges=0:0.01:0.3;
+
+left=0.15;
+bottom=0.15;
+width=6.9;
+hight=2.1;
+f=figure('Units', 'inches', 'Position',[left, bottom,width,hight]);
+
+subplot(1,2,1)
+for line=1:4
+    [Pp(line,:),edges]=histcounts(reshape(sigmaIp(:,:, line),1,[]),edges,'Normalization','probability');
+    [Pt(line,:),edges]=histcounts(reshape(sigmaIt(:, :, line),1,[]),edges,'Normalization','probability');
+    plot(edges(2:end),cumsum(Pp(line,:)), 'Color', Col4Dose(3,:), 'LineStyle', '--');
+    hold on
+    plot(edges(2:end),cumsum(Pt(line,:)),'Color', 'k', 'LineStyle', '--');
+end
+plt{1}=plot(edges(2:end),cumsum(nanmean(Pp,1)), 'Color', Col4Dose(3,:),'LineWidth', 1);
+hold on
+plt{2}=plot(edges(2:end),cumsum(nanmean(Pt,1)),'Color', 'k', 'LineWidth', 1);
+
+ylabel('Cumulative Probability');
+xlabel('\sigma_i');
+legend([plt{1},plt{2}], {'2xGapPeaks', '2xGapTroughs'}, 'Location', 'south');
+box off 
+axis square
+
+XRange=351:10:750;
+AbsDgForBestGene=[];  
+for lineID=1:4
+       for s=1:length(XRange)
+            AbsDgForBestGene=[AbsDgForBestGene;abs(dgm1g(XRange(s),Gmin(XRange(s),lineID),lineID))];
+       end
+end
+
+
+AllAbsDG=abs(dgm1g);
+AllAbsDG=reshape(AllAbsDG,[],1);
+
+subplot(1,2,2)
+histogram(AllAbsDG,1:1:18, 'Normalization', 'probability');
+hold on
+histogram(AbsDgForBestGene, 1:1:18,'Normalization','probability');
+axis square
+xlabel('|dg/dx|');
+ylabel('P');
+box off
+legend('all genes', 'min \sigma_x1g gene','Position',[0.771 0.721 0.185 0.185]);
+%%  panels C&D for S3
+left=0.15;
+bottom=0.15;
+width=6.8;
+hight=2;
+f=figure('Units', 'inches', 'Position',[left, bottom,width,hight]);
+subplot(1,2,1)
+for lineID=1:4
+    for pp=1:3
+        if pp==1
+            XRange=xEve1(:,lineID)';
+            Mark='^';
+        elseif pp==2
+            XRange=xEveT(:,lineID)';
+            Mark='v';
+        else
+            XRange=xEveI(:,lineID)';
+            Mark='x';
+        end
+            
+      counter=0;
+      for x=XRange
+          counter=counter+1;
+          if pp==1 ||pp==2 
+              Col=C(counter,:);
+          else
+              Col='k';
+          end
+            plot( m1gm(x,Gmin(x,lineID),lineID),sqrt(cgm1g(x,Gmin(x,lineID),lineID))/ m1gm(x,Gmin(x,lineID),lineID) ,...
+                     'Color', Col, 'Marker', Mark, 'LineStyle', 'none', 'MarkerSize',4);
+        hold on
+      end
+         end
+end
+xlabel('<g_i>');
+ylabel('\sigma_i_g/<g_i>')
+axis square
+box off
+
+subplot(1,2,2)
+for lineID=1:4
+    for pp=1:3
+        if pp==1
+            XRange=xEve1(:,lineID)';
+            Mark='^';
+        elseif pp==2
+            XRange=xEveT(:,lineID)';
+            Mark='v';
+        else
+            XRange=xEveI(:,lineID)';
+            Mark='x';
+        end
+            
+      counter=0;
+      for x=XRange
+          counter=counter+1;
+          if pp==1 ||pp==2 
+              Col=C(counter,:);
+          else
+              Col='k';
+          end
+             plot(abs(dgm1g(x,Gmin(x,lineID),lineID)) ,sqrt(cgm1g(x,Gmin(x,lineID),lineID))/ m1gm(x,Gmin(x,lineID),lineID),...
+            'Color', Col, 'Marker', Mark, 'LineStyle', 'none', 'MarkerSize',4);
+            hold on
+      end
+      pl{pp}=plot(nan, nan, 'Marker', Mark, 'LineStyle', 'none', 'Color', 'k', 'MarkerSize',4);
+         end
+end
+xlabel('|dg/dx|');
+ylabel('\sigma_i_g/<g_i>')
+axis square
+box off
+legend([pl{1},pl{2},pl{3}], {'peak', 'Trough', 'Inter'},'Position',[0.4 0.492 0.131 0.245]);
+%% plot panel E for S3:
+% plot each line seperately, and indicate pc variance precentage:
+MS=2.3;% this is marker size
+
+left=0.15;
+bottom=0.15;
+width=6.850394;
+hight=2;
+f=figure('Units', 'inches', 'Position',[left, bottom,width,hight]);
+Tag=['A','B', 'C','D','E','F','G','H'];
+for p=1%:2
+    pc4show=[1,2]+2*(p-1);
+    for lineID=1:4
+%         subplot(2,4,4*(p-1)+lineID);
+        subplot(1,4,lineID);
+        for stripe =1:6
+                    mark='v';
+             plot(ProjectedD{lineID}(stripe,:,pc4show(1)), ProjectedD{lineID}(stripe,:,pc4show(2)), 'Marker',mark, 'LineStyle', 'none',...
+             'Color','k', 'MarkerFaceColor', C(stripe,:), 'MarkerSize', MS);
+              hold on
+         end
+
+        for  stripe=1:7
+            ndx=1+(stripe-1)*countEperStripe(lineID):stripe*countEperStripe(lineID); 
+            plot(score{lineID}(ndx,pc4show(1)), score{lineID}(ndx,pc4show(2)), 'Marker','o', 'LineStyle', 'none',...
+             'Color',C(stripe,:), 'MarkerFaceColor', C(stripe,:), 'MarkerSize', MS-0.7 );
+
+            hold on
+
+        end
+        xlabel(['pc',num2str(pc4show(1)),' (', num2str(explained{lineID}(pc4show(1)),3), '%)']);
+        ylabel(['pc',num2str(pc4show(2)),' (', num2str(explained{lineID}(pc4show(2)),3), '%)']);
+        axis square
+        xlim([-3.5 3.5])
+        ylim([-3.5 3.5])
+        grid on
+        box off
+        text(-3.5, 4.2, ['2x',gapName4display{lineID}], 'FontAngle','italic');
+
+    end
+end

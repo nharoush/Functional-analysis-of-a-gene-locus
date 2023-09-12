@@ -1,0 +1,670 @@
+%% Analyzes Eve data and plot Figures 1 & S1 
+%preprocess eve data for 45-55 min: identify dose, normalize intensity 
+%and find eve stripes peak and troughs locations 
+%then plots figure 1 and s1
+
+% this file calls other file:
+% * sortGAP2doseWithMinMaxCentrdIntl3grp OR sortGAP2dose
+
+% Eve data in the files "GapEve45_55min.mat" includes:
+% protein levels (raw fluorecent intensity of dorsal profile): '' and the manipulated gap gene per line (e.g. 'Hb',OR 'Kr' ect.)
+% temporal stamp of an embryo (in minutes into nuclear cycle 14): 'Age'
+% embryo index in the raw data (the sequential acquisition index of embryos within a given hemizygot line), 'ix');
+
+%% MAKE SURE TO INCLUDE DATA AND CODE FOLDERS & SUBFOLDERS IN YOUR PATH PRIOR TO RUNNING THIS CODE %%%
+% Specifically, include the following folders with their subfolders:
+% "Code", "EveData", "gapData"
+%%
+clearvars
+if ~exist('processedData', 'dir')
+    mkdir('processedData')
+end
+fol=cd;
+pn = fullfile(fol,'processedData');
+
+%% find eve peaks for all datasets
+gapName4display={'hb','Kr','gt','kni'};
+gapNames={'Hb','Kr','Gt','Kni'};
+ssN=20; % smoothing span for Eve traces in null mutants(# of pixels)
+nP=[7, 7, 7, 7];
+xixp=290:810;%egg lenngth to consider for peak and troughs detection
+xixt=325:790;
+for lineID=1:4
+    clear Hb Gt Kni Kr
+    EvePeakLocNulls=[];
+    EvePeakIntensNulls=[];
+    EveValleyLocNulls=[];
+    EvePeakLocHets=[];
+    EvePeakIntensHets=[];
+    EveValeyLocHets=[];
+    EvePeakLocWT=[];
+    EvePeakIntensWT=[];
+    EveValeyLocWT=[];
+       
+
+    lineID
+        load ([gapNames{lineID},'Eve45_55min']);
+            if exist ('Hb', 'var')
+                Gap=Hb;
+            elseif exist ('Kr', 'var')
+                Gap=Kr;
+                Eve=Eve-0.2*Gap;% for visualization: correcting crosstalk in this measurement between Kr and Eve.
+            elseif exist ('Gt', 'var')
+                    Gap=Gt;
+            elseif exist ('Kni', 'var')
+                Gap=Kni;
+            end
+
+
+    % remvoe background from individual embryos
+        Gap=Gap-min(Gap(:,101:900), [],2);% for all but gt
+        Eve=Eve-min(Eve(:,101:900), [],2);
+
+    k=3;
+    [idHets, idNulls,id2x]=sortGAP2dose(Gap(:,50:900));
+    % % %     figure; plot(Gap(id2x, :)', 'g'); hold on; plot(Gap(idHets,:)', 'm');
+    % % %     plot(Gap(idNulls, :)', 'k')
+    %Normalize all genes to their max wt level
+    Gap=Gap/max(max(Gap(id2x,:)));
+    Eve=Eve/max(max(Eve(id2x,:)));
+    % figure; plot(Eve') 
+
+    for gen=0:2
+        if gen==0
+            ix=idNulls;
+        elseif gen==1
+            ix=idHets;
+        else
+            ix=id2x;
+        end
+
+        if gen==0 || lineID~=4 
+            mmp=0.02;%
+        else
+            mmp=0;
+        end
+        
+    
+        for pt=1:2% when pt==1 peaks are detected, when pt==2 troughs are detected
+            
+            if pt==1
+                fl=1;
+                xix=xixp;
+                np=nP(lineID);
+            else
+                fl=-1;
+                xix=xixt;
+                np=sum(~isnan(nanmean(EvePeakLoc)))-1;%  for any n peaks, n-1 troughs are considered
+            end
+            
+            
+            if lineID==1 && gen==0 && pt==2
+                minIPI=50;
+                xix=xixp;
+            elseif gen==1 && lineID==4
+                minIPI=25; % this is to enable detection of eve troughs in heterozygots for kni 
+                xix(end-10:end)=[];
+            elseif gen==1 && lineID==2
+                minIPI=35;
+            else
+                minIPI=40;
+            end
+             
+            
+            if gen==0
+                ss=ssN;
+            else
+                ss=1;
+            end
+            eve=Eve(ix,:);
+            nEm=length(ix);
+            EvePeakIntens=nan(nEm,np);
+            EvePeakLoc=nan(nEm,np); 
+            for i=1:nEm
+                
+                     eve(i,:)=fl*smooth(eve(i,:), ss);
+                    [pck2x1,loc2x1]=findpeaks(eve(i,xix),...
+                             'SortStr', 'descend', 'MinPeakDistance', minIPI, 'MinPeakProminence',mmp);
+                        
+                                
+                pck2x1(np+1:end)=[];
+                loc2x1(np+1:end)=[];
+% % % % % % % % %     unremark to visualize peak/trough detection:
+% %                 figure; plot(eve(i,xix));
+% %                       hold on
+% %                       plot(loc2x1,pck2x1,'*r');
+                      loc2x1=loc2x1'+xix(1)-1;
+                      
+                       if ~isempty(loc2x1)
+                              index=sortrows([loc2x1,(1:length(loc2x1))']);    
+                                index(:,1)=[];
+                              EvePeakIntens(i,1:length(loc2x1))=pck2x1(index);
+                               EvePeakLoc(i,1:length(loc2x1))=loc2x1(index);    
+
+                          else
+                           EvePeakIntens(i,:)=nan;
+                           EvePeakLoc(i,:)=nan;
+                          continue 
+                       end
+
+            end
+
+            % make sure that flickering stripes are assigned with their correct
+            % serial identity:
+            a=~isnan(EvePeakLoc);
+            sN=max(sum(a,2));% max num of stripes identified
+            %      find embryos that show all stripes:
+                emLine=~isnan(EvePeakLoc(:,sN));
+                if sum(emLine)==1
+                    meanPeakLocNulls=(EvePeakLoc(emLine,:));
+
+                else
+                 meanPeakLocNulls=nanmean(EvePeakLoc(emLine,:));
+                end
+                 EvePeakIntensNulls1=nan(nEm, 7);
+                 EvePeakLocNulls1=nan(nEm, 7);
+                for i=1:nEm
+                    locNulls1=EvePeakLoc(i,~isnan(EvePeakLoc(i,:)));
+                           for k=1:length(locNulls1)
+                               dP=abs(meanPeakLocNulls-locNulls1(k));
+                               [m,ind]=min(dP);
+                               EvePeakIntensNulls1(i,ind)=EvePeakIntens(i,k);
+                               EvePeakLocNulls1(i,ind)=locNulls1(k);    
+                           end
+                end  
+                EvePeakLoc=EvePeakLocNulls1;
+                EvePeakIntens=EvePeakIntensNulls1;
+
+
+            nanstd(EvePeakLoc)
+            if gen==0 && pt==1
+                EvePeakLocNulls=EvePeakLoc;
+                EvePeakIntensNulls=EvePeakIntens;
+            elseif gen==0 && pt==2
+                EveValleyLocNulls=EvePeakLoc(:,1:6);
+            elseif  gen==1 && pt==1
+                EvePeakLocHets=EvePeakLoc;
+                EvePeakIntensHets=EvePeakIntens;
+            elseif gen==1 && pt==2
+                EveValeyLocHets=EvePeakLoc(:,1:6);
+            elseif gen==2 && pt==1
+                EvePeakLocWT=EvePeakLoc;
+                EvePeakIntensWT=EvePeakIntens;
+            elseif gen==2 && pt==2
+                EveValeyLocWT=EvePeakLoc(:,1:6);
+            end
+        end
+    end
+    % % % % % % % % % % % % % % % % % %% save
+    fn=fullfile(pn,['PRpeakNvalley4',gapNames{lineID}]);
+    save(fn);
+end
+%% Get Eve's positional error for peaks and troughs
+gapName4display={'hb','Kr','gt','kni'};
+gapNames={'Hb','Kr','Gt','Kni'};
+PosErWT=nan(4,7);
+PosErHets=nan(4,7);
+PosErNulls=nan(4,7);
+
+PosErValNulls=nan(4,6);
+PosErValWT=nan(4,6);
+PosErValHets=nan(4,6);
+
+for lineID=1:4
+    fn=fullfile(pn,['PRpeakNvalley4',gapNames{lineID}]);
+    load (fn)
+    PosErWT(lineID,:)=nanstd(EvePeakLocWT/1000);
+    PosErHets(lineID,:)=nanstd(EvePeakLocHets/1000);
+    PosErNulls(lineID,:)=nanstd(EvePeakLocNulls/1000);
+    
+    PosErValWT(lineID,:)=nanstd(EveValeyLocWT/1000);
+    PosErValHets(lineID,:)=nanstd(EveValeyLocHets/1000);
+    PosErValNulls(lineID,1:size(EveValleyLocNulls,2))=nanstd(EveValleyLocNulls/1000);
+end
+
+%% Figure 1, Panels D-F & I-J
+left=0.15;
+bottom=0.15;
+width=6.850394;
+hight=4;
+figg=figure('Units', 'inches', 'Position',[left, bottom,width,hight]);
+Col4Dose=[1 ,0.078, 0.65;...
+0.93, 0.69, 0.13;...
+0.21, 0.8, 0.51];
+Cstripe=colormap(jet(7));
+
+bottoM=[0.06 0.32 0.57 0.82];
+Left=[0.75 0.43 0.1];
+panelH=0.09;
+panelW=0.18;
+spacer=0.065;
+lineID=1;% take example form hb/- line
+fn=fullfile(pn,['PRpeakNvalley4',gapNames{lineID}]);
+load(fn);
+        for group=1:3
+            POSTop=[Left(group), 0.8, panelW,panelH+0.09];
+            axes('Position', POSTop);
+                if group==1
+                    IX=idNulls;
+                    peakLocs=EvePeakLocNulls;
+                    peakI=EvePeakIntensNulls/max(mean(Eve(id2x,101:900)));
+                   StripePenentrance(:,lineID)=100*sum(~isnan(peakLocs))/size(peakLocs,1)
+               elseif group==2
+                   IX=idHets;
+                   peakLocs=EvePeakLocHets;
+                   peakI=EvePeakIntensHets/max(mean(Eve(id2x,101:900)));
+                else
+                    IX=id2x;
+                    peakLocs=EvePeakLocWT;
+                    peakI=EvePeakIntensWT/max(mean(Eve(id2x,101:900)));
+                end
+                if group==1
+                    for i=1:length(IX)
+                        plot((101:900)/1000, smooth(Eve(IX(i),101:900),15)/max(mean(Eve(id2x,101:900))), 'Color',[0.9 0.9 0.9]);
+                        hold on
+                    end
+                else
+                   
+                    plot((101:900)/1000, (Eve(IX,101:900))/max(mean(Eve(id2x,101:900))), 'Color',[0.9 0.9 0.9]);
+                end
+                    hold on
+                    plot(peakLocs/1000, peakI+0., 'Marker','o','MarkerSize', 1.2,...
+                 'LineStyle', 'none', 'Color',[0.7 0.7 0.7] );
+                    plot((101:900)/1000, mean(Eve(IX,101:900))/max(mean(Eve(id2x,101:900))),...
+                        'Color',Col4Dose(group,:),'LineWidth', 0.6 );
+                    nEm(lineID,group)=length(IX);
+
+                box off
+                  ylabel('<I>');
+                set(gca, 'XTick', []);
+                ylim([0 2.1])
+                xlim([0.1 0.9])
+             plot((101:900)/1000, mean(Eve(id2x,101:900))/max(mean(Eve(id2x,101:900))),...
+                 'Color',Col4Dose(3,:),'LineWidth', 0.6);
+             hold on
+             plot((101:900)/1000, mean(Gap(id2x,101:900))/max(mean(Gap(id2x,101:900))), 'Color',[0.5 0.5 0.5],...
+                    'LineStyle', '--');
+             
+        text(0.1,1.2 ,[num2str(group-1),'x', gapName4display{lineID}],...
+            'FontAngle', 'italic', 'FontSize', 8, 'FontWeight' ,'bold');
+        text(0.1,1.8 ,['n=',num2str(nEm(lineID,group))],...
+            'FontAngle', 'italic', 'FontSize', 8, 'FontWeight' ,'bold');
+                POSBot=[Left(group), 0.6, panelW,panelH+0.08];
+
+     axes('Position', POSBot);
+     dltx=nanstd(peakLocs/1000);
+        if group==2
+           for s=1:7
+                errorbar(nanmean(peakLocs(:,s))/1000,...
+                nanmean(peakLocs(:,s)-nanmean(EvePeakLocWT(:,s)))/1000,...
+                dltx(s),...
+                'Marker', 'o', 'MarkerFaceColor',[0.7 0.7 0.7], 'MarkerEdgeColor',...
+                [0.7 0.7 0.7],'Color', [0.7 0.7 0.7], 'MarkerSize', 2);  
+                hold on
+           end
+            hold on
+            plot([0.1,0.9], [0,0], ':k');
+            plot([0.1,0.9], [0.01,0.01], '--k');
+            plot([0.1,0.9], [-0.01,-0.01], '--k');
+            ylim([-0.04,0.02])
+            xlim([0.1 0.9])
+            ylabel('\Deltax');
+            xlabel('x/l');
+            box off
+        elseif group==3
+                errorbar(nanmean(peakLocs/1000),...
+                zeros(7,1),...
+                dltx,...
+                'Marker', 'o', 'MarkerFaceColor', [0.7 0.7 0.7], 'MarkerEdgeColor',...
+                 [0.7 0.7 0.7],'Color', [0.7 0.7 0.7], 'MarkerSize', 2, 'LineStyle', 'none');  
+                ylim([-0.04,0.02])
+        else
+                for S=1:7
+                    for s=1:7
+                        minDeltaX(S,s)=(nanmean(peakLocs(:,S))-nanmean(EvePeakLocWT(:,s)))/1000;
+                    end
+                    [M,I]=min(abs(minDeltaX(S,:)));
+                    MinDeltaX(S)=minDeltaX(S,I);
+                end
+            
+            errorbar(nanmean(peakLocs/1000),MinDeltaX,dltx,...
+                'Marker', 'o', 'MarkerFaceColor', [0.7 0.7 0.7], 'MarkerEdgeColor',...
+            [0.7 0.7 0.7],'Color', [0.7 0.7 0.7], 'MarkerSize', 2, 'LineStyle', 'none'); 
+        
+            a=100*sum(~isnan(peakLocs))/size(peakLocs,1);
+            b=nanmean(peakLocs/1000);
+            for s=1:7 
+                if a(s)>0 && a(s)<100
+                    text(b(s)-0.05,0.035-(s-1)*0.02,[num2str(a(s),2),'%'],...
+                        'FontSize', 6, 'FontAngle','italic');
+                end
+            end
+            ylim([-0.05,0.05])
+        end
+         xlim([101,900]/1000);
+         box off
+        hold on
+        plot([0.1,0.9], [0,0], ':k');
+        plot([0.1,0.9], [0.01,0.01], '--k');
+        plot([0.1,0.9], [-0.01,-0.01], '--k');
+        xlim([0.1 0.9])          
+       if group==1
+            ylabel('min(\Deltax)');
+       else
+            ylabel('\Deltax');
+       end
+        xlabel('x/l');
+        box off
+    end
+      xlim([101,900]/1000);
+      box off                            
+
+
+
+subplot(2,2,3)
+edges=0:0.001:0.05;
+histogram(PosErNulls(~isnan(PosErNulls)),edges,'Normalization', 'count', 'FaceAlpha', 0.9, 'FaceColor',Col4Dose(1,:));
+hold on
+histogram(PosErHets(~isnan(PosErHets)),edges,'Normalization', 'count', 'FaceAlpha', 0.6, 'FaceColor',Col4Dose(2,:));
+histogram(PosErWT(~isnan(PosErWT)),edges,'Normalization', 'count', 'FaceAlpha', 0.5, 'FaceColor',Col4Dose(3,:));
+xlabel('\deltax');
+ylabel('# peaks');
+box off
+xlim([0,0.05]);
+ylim([0 10]);
+set (gca, 'YTick', 2:2:10);
+set (gca, 'XTick', 0:0.01:0.05);
+
+legend('0xGap','1xGap', '2xGap');
+
+subplot(2,2,4)
+histogram(PosErValNulls(~isnan(PosErValNulls)),edges,'Normalization', 'count', 'FaceAlpha', 0.9, 'FaceColor',Col4Dose(1,:));
+hold on
+histogram(PosErValHets(~isnan(PosErValHets)),edges,'Normalization', 'count', 'FaceAlpha', 0.6, 'FaceColor',Col4Dose(2,:));
+histogram(PosErValWT(~isnan(PosErValWT)),edges,'Normalization', 'count', 'FaceAlpha', 0.5, 'FaceColor',Col4Dose(3,:));
+xlabel('\deltax');
+ylabel('# troughs')
+box off
+xlim([0,0.05]);
+ylim([0 10]);
+set (gca, 'YTick', 2:2:10);
+set (gca, 'XTick', 0:0.01:0.05);
+%% Figure 1, Panels G-H
+% get stripe shifts and stripe penetrance:
+DeltaX1xALL=[];
+DeltaX0xAll=[];
+for lineID=1:4
+    fn=fullfile(pn,['PRpeakNvalley4',gapNames{lineID}]);
+    load(fn);
+        for group=1:3
+            if group==1
+                    IX=idNulls;
+                    peakLocs=EvePeakLocNulls;
+
+                   StripePenentrance(:,lineID)=100*sum(~isnan(peakLocs))/size(peakLocs,1);
+                   NstripePerEm=sum(~isnan(peakLocs'));
+                   for sp=1:7
+                       a=NstripePerEm>=sp;
+                        stripeNumPen(sp,lineID)=100*sum(a)/length(a);
+                   end
+                   
+                   for e=1:size(peakLocs,1)
+                        for S=1:7
+                            for s=1:7
+                                minDeltaX(S,s)=((peakLocs(e,S))-nanmean(EvePeakLocWT(:,s)))/1000;
+                            end
+                            [M,I]=min(abs(minDeltaX(S,:)));
+                            MinDeltaX(S)=minDeltaX(S,I);
+                        end
+                        DeltaX0xAll=[DeltaX0xAll;MinDeltaX];
+                   end
+
+            elseif group==2
+                       IX=idHets;
+                       peakLocs=EvePeakLocHets;
+                       peakI=EvePeakIntensHets/max(mean(Eve(id2x,101:900)));
+                       for s=1:7
+                            DeltaX1xALL=[DeltaX1xALL;(peakLocs(:,s)-nanmean(EvePeakLocWT(:,s)))/1000];
+                        end
+            else
+                        IX=id2x;
+                        peakLocs=EvePeakLocWT;
+                        peakI=EvePeakIntensWT/max(mean(Eve(id2x,101:900)));
+            end       
+         
+        end
+end
+
+% plot:
+left=0.15;
+bottom=0.15;
+width=6.850394;
+hight=2;
+f=figure('Units', 'inches', 'Position',[left, bottom,width,hight]);
+subplot(1,2,1);
+histogram(reshape(DeltaX0xAll,1,[]), -0.04:0.002:0.04, 'EdgeColor', Col4Dose(1,:),...
+ 'DisplayStyle','Stairs');
+hold on
+histogram(DeltaX1xALL, -0.04:0.002:0.04,'EdgeColor', Col4Dose(2,:), 'DisplayStyle','Stairs');
+xlabel('\Deltax');
+ylabel('# peaks');
+hold on
+plot([0.01,0.01],[0 7], '--k');
+plot([-0.01,-0.01],[0 7], '--k');
+set(gca, 'XTick',-0.04:0.01:0.04 );
+legend('0xGap', '1xGap');
+box off
+
+c=[0.9960,    0.8200  ,  0.6040;...
+    0.7120 ,   0.9040   , 0.5480;...
+    0.4480  ,  0.5960  ,  0.9000;...
+    0.8360   , 0.5640 ,   0.7120];
+subplot(1,2,2)
+b=bar(stripeNumPen);
+b(1).FaceColor=c(1,:);
+b(1).FaceAlpha=0.7;
+
+b(2).FaceColor=c(2,:);
+b(3).FaceColor=c(3,:);
+b(4).FaceColor=c(4,:);
+
+ylabel('Penetrance %');
+xlabel('# of stripes');
+box off
+legend('0xhb','0xKr','0xgt','0xkni', 'FontSize', 7)
+
+%% Figure S1 A-C: eve data, displacement and positional error:
+gapName4display={'hb','Kr','gt','kni'};
+gapNames={'Hb','Kr','Gt','Kni'};
+
+Col4Dose=[1 ,0.078, 0.65;...
+0.93, 0.69, 0.13;...
+0.21, 0.8, 0.51];
+left=0.15;
+bottom=0.15;
+width=6.850394;
+hight=7.5;
+figg=figure('Units', 'inches', 'Position',[left, bottom,width,hight]);
+Cstripe=colormap(jet(7));
+MaxSl=3;
+bottoM=[0.06 0.32 0.57 0.82];
+Left=[0.75 0.43 0.1];
+
+panelH=0.09;
+panelW=0.18;
+spacer=0.065;
+
+Hi=0.05;
+Lef=0.01;
+panSizeW=0.32;
+panSizeL=0.945;
+for group=1:3
+    annotation('rectangle','Position', [Lef+panSizeW*(group-1),Hi,panSizeW-0.005,panSizeL],...
+                        'Color', Col4Dose(4-group,:), 'LineWidth', 1.5);
+end
+
+
+for lineID=1:4
+    fn=fullfile(pn,['PRpeakNvalley4',gapNames{lineID}]);
+    load(fn);
+    for group=1:3
+            POSTop=[Left(group), bottoM(1)+2*panelH*(lineID-1)+panelH+spacer*(lineID-1)+0.015, panelW,panelH];
+            axes('Position', POSTop);
+                if group==1
+                    IX=idNulls;
+                    peakLocs=EvePeakLocNulls;
+                    peakI=EvePeakIntensNulls/max(mean(Eve(id2x,101:900))); 
+                elseif group==2
+                   IX=idHets;
+                   peakLocs=EvePeakLocHets;
+                   peakI=EvePeakIntensHets/max(mean(Eve(id2x,101:900)));
+                else
+                    IX=id2x;
+                    peakLocs=EvePeakLocWT;
+                    peakI=EvePeakIntensWT/max(mean(Eve(id2x,101:900)));
+                end
+                
+                if group==1
+                        SSPn=20;    
+                        for i=1:length(IX)
+                            plot((101:900)/1000, smooth(Eve(IX(i),101:900),SSPn)/max(mean(Eve(id2x,101:900))), 'Color',[0.9 0.9 0.9]);
+                            hold on
+                        end
+                   else
+                      plot((101:900)/1000, (Eve(IX,101:900))/max(mean(Eve(id2x,101:900))), 'Color',[0.9 0.9 0.9]);
+                        hold on
+                end
+                    plot(peakLocs/1000, peakI+0., 'Marker','o','MarkerSize', 1.2,...
+                 'LineStyle', 'none', 'Color',[0.7 0.7 0.7] );
+                    plot((101:900)/1000, mean(Eve(IX,101:900))/max(mean(Eve(id2x,101:900))),...
+                        'Color',Col4Dose(group,:),'LineWidth', 0.6 );
+                    nEm(lineID,group)=length(IX);
+                box off
+                ylabel('<I>');
+                set(gca, 'XTick', []);
+                ylim([0 2.1])
+                xlim([0.1 0.9])
+                plot((101:900)/1000, mean(Eve(id2x,101:900))/max(mean(Eve(id2x,101:900))),...
+                 'Color',Col4Dose(3,:),'LineWidth', 0.6);
+                hold on
+                plot((101:900)/1000, mean(Gap(id2x,101:900))/max(mean(Gap(id2x,101:900))), 'Color',[0.5 0.5 0.5],...
+                    'LineStyle', '--');
+             
+                text(0.1,1.2 ,[num2str(group-1),'x', gapName4display{lineID}],...
+                    'FontAngle', 'italic', 'FontSize', 8, 'FontWeight' ,'bold');
+                text(0.1,1.8 ,['n=',num2str(nEm(lineID,group))],...
+                    'FontAngle', 'italic', 'FontSize', 8, 'FontWeight' ,'bold');
+                POSBot=[Left(group), bottoM(1)+2*panelH*(lineID-1)+spacer*(lineID-1)+panelH/2,...
+                    panelW,panelH/2];
+
+            axes('Position', POSBot);
+            dltx=nanstd(peakLocs/1000);
+            if group==2
+               for s=1:7
+                    errorbar(nanmean(peakLocs(:,s))/1000,...
+                    nanmean(peakLocs(:,s)-nanmean(EvePeakLocWT(:,s)))/1000,...
+                    dltx(s),'Marker', 'o', 'MarkerFaceColor',[0.7 0.7 0.7], 'MarkerEdgeColor',...
+                    [0.7 0.7 0.7],'Color', [0.7 0.7 0.7], 'MarkerSize', 2);  
+                    hold on
+               end
+
+                hold on
+                plot([0.1,0.9], [0,0], ':k');
+                plot([0.1,0.9], [0.01,0.01], '--k');
+                plot([0.1,0.9], [-0.01,-0.01], '--k');
+                ylim([-0.04,0.02])
+                xlim([0.1 0.9])
+                ylabel('\Deltax');
+                xlabel('x/l');
+                box off
+            elseif group==3
+                    errorbar(nanmean(peakLocs/1000),...
+                    zeros(7,1),...
+                    dltx,...
+                    'Marker', 'o', 'MarkerFaceColor', [0.7 0.7 0.7], 'MarkerEdgeColor',...
+                    [0.7 0.7 0.7],'Color', [0.7 0.7 0.7], 'MarkerSize', 2, 'LineStyle', 'none');  
+                    ylim([-0.04,0.02])
+            else
+                for S=1:7
+                    for s=1:7
+                        minDeltaX(S,s)=(nanmean(peakLocs(:,S))-nanmean(EvePeakLocWT(:,s)))/1000;
+                    end
+                    [M,I]=min(abs(minDeltaX(S,:)));
+                    MinDeltaX(S)=minDeltaX(S,I);
+                end
+            errorbar(nanmean(peakLocs/1000),...
+                MinDeltaX,...
+                dltx,...
+                'Marker', 'o', 'MarkerFaceColor', [0.7 0.7 0.7], 'MarkerEdgeColor',...
+            [0.7 0.7 0.7],'Color', [0.7 0.7 0.7], 'MarkerSize', 2, 'LineStyle', 'none'); 
+        
+            a=100*sum(~isnan(peakLocs))/size(peakLocs,1);
+            b=nanmean(peakLocs/1000);
+            for s=1:7 
+                if a(s)>0 && a(s)<100
+                    if mod(s,2)~=0
+                        text(b(s)-0.04,0.05,[num2str(a(s),2),'%'], 'FontSize', 6, 'FontAngle','italic');
+                    else
+                        text(b(s)-0.04,-0.05,[num2str(a(s),2),'%'], 'FontSize', 6, 'FontAngle','italic');
+                    end
+                end
+            end
+            ylim([-0.07,0.07])
+        end
+            xlim([101,900]/1000);
+             box off
+             hold on
+            plot([0.1,0.9], [0,0], ':k');
+            plot([0.1,0.9], [0.01,0.01], '--k');
+            plot([0.1,0.9], [-0.01,-0.01], '--k');
+            xlim([0.1 0.9])
+    if group==1
+            ylabel('min(\Deltax)');
+    else
+            ylabel('\Deltax');
+    end
+            xlabel('x/l');
+            box off
+
+    end
+      xlim([101,900]/1000);
+             box off                 
+     
+end
+print(gcf,'FigS1','-djpeg', '-r300');%'-dpdf','-r300');         %*// 300 dpi
+%% Panels D-F of S1: examples for 0xhb stripes realizations
+left=0.15;
+bottom=0.15;
+width=6.850394;
+hight=1.5;
+roman={'I', 'II', 'III', 'IV','V','VI', 'VII'};
+f=figure('Units', 'inches', 'Position',[left, bottom,width,hight]);
+lineID=1;
+fn=fullfile(pn,['PRpeakNvalley4',gapNames{lineID}]);
+load(fn);
+IX=idNulls;
+peakLocs=EvePeakLocNulls;
+peakI=EvePeakIntensNulls/max(mean(Eve(id2x,101:900))); 
+counter=0;
+for i=[10 13 14]
+    counter=counter+1;
+    subplot(1,4,counter);
+        normF=max(mean(Eve(id2x,101:900)));
+        plot((101:900)/1000, smooth(Eve(IX(i),101:900),20)/normF, 'Color',[0.5 0.5 0.5]);
+                    hold on
+                    plot(peakLocs(i,:)/1000, peakI(i,:), 'Marker','o','MarkerSize', 2.5,...
+                 'LineStyle', 'none', 'Color',[0.7 0.7 0.7] );
+                    
+                    xlabel('x/l');
+                    ylabel('I_{eve}');
+                    box off
+                    xlim([0.1 0.9]);
+                    ylim([0 1.3]);
+                    title (['0xhb, Embryo #',num2str(counter)])%(num2str(i))
+%                    text(-0.1,1.5,Tag{8+counter}, 'FontWeight','bold', 'FontSize', 10);
+                   for k=1:size(peakLocs,2)
+                        text((peakLocs(i,k))/1000-0.02, (peakI(i,k))-0.2,roman{k},...
+                        'FontSize', 7, 'FontAngle','italic');
+                    end
+
+end
